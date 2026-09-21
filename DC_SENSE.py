@@ -1,19 +1,21 @@
 import torch
 from utils import fft, ifft
 
-class Data_consistency(torch.nn.Module):
-
+class DC_SENSE(torch.nn.Module):
+    '''
+    Data consistency class for multi-band data reconstruction with CG-SENSE
+    '''
     def __init__(self, mu=0.05):
         super().__init__()
         self.mu = torch.nn.Parameter(torch.tensor(mu), requires_grad = True)
    
     def E(self, x, coil, mask):
-        x = torch.einsum('nmxy, mcxy -> ncxy', x, coil) #Apply coils
+        x = torch.einsum('...mxy, mcxy -> ...cxy', x, coil) #Apply coils (c dimension) and sum over multi-band slices (m dimension)
         return fft(x, [-2,-1]) * mask
         
     def EH(self, x, coil, mask):
         image = ifft(x*mask, [-2,-1])
-        return torch.einsum('ncxy, mcxy -> nmxy', image, torch.conj(coil)) #Apply conjugate coils
+        return torch.einsum('...cxy, mcxy -> ...mxy', image, torch.conj(coil)) #Sum over conjugate coils (c dimension) and expand over multi-band slices (m dimension)
 
     def EHE(self, image, coil, mask):
         return self.EH(self.E(image, coil, mask), coil, mask)

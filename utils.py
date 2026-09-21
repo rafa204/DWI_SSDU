@@ -8,6 +8,13 @@ def ifft(img, dims=[-2,-1]):
 def fft(kspace, dims=[-2,-1]):
     return torch.fft.fftshift(torch.fft.fftn(torch.fft.ifftshift(kspace, dim=dims), dim=dims, norm = 'ortho'), dim=dims)
 
+def fft_np(x, ax=(-2,-1), xp = np):
+    return xp.fft.fftshift(xp.fft.fftn(xp.fft.ifftshift(x, axes=ax), axes=ax, norm='ortho'), axes=ax)
+
+def ifft_np(x, ax=(-2,-1), xp = np):
+    return xp.fft.fftshift(xp.fft.ifftn(xp.fft.ifftshift(x, axes=ax), axes=ax, norm='ortho'), axes=ax)
+
+
 def rssq(x, xp = torch):
     return xp.sqrt(xp.sum(xp.abs(x)**2, -3))
 
@@ -20,8 +27,8 @@ def shift_fov(x, fov_shifts, xp = torch):
     '''
     slices = []
     for i in range(x.shape[-3]):
-        shift = xp.ceil(fov_shifts[i] * x.shape[-2])
-        slice_i = xp.roll(x[..., i, :, :], shift, axis=-2)
+        shift = int(fov_shifts[i] * x.shape[-2])
+        slice_i = xp.roll(x[..., i, :, :], shift, -2)
         slices.append(slice_i)
     return xp.stack(slices, axis=-3)
 
