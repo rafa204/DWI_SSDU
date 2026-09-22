@@ -14,15 +14,16 @@ class DC_SPIRIT(torch.nn.Module):
         self.mb = 5
    
     def E(self, x, mask):
-            return x.sum(1) * mask
+            return x.sum(2) * mask
         
     def EH(self, x, mask):
-        return torch.stack([x*mask] * self.mb, axis=1)
+        return torch.stack([x*mask] * self.mb, axis=2)
 
     def EHE(self, image, mask):
         return self.EH(self.E(image, mask), mask)
 
     #SPIRIT KSPACE CONVOLUTION OPERATOR
+    '''
     def G(self, x, filter):
         kx, ky = self.ks
         k1, k2 = kx // 2, ky // 2
@@ -48,6 +49,46 @@ class DC_SPIRIT(torch.nn.Module):
         weight = filter_adj.transpose(2, 3).reshape(n * a * c, b, filter.shape[-2], filter.shape[-1]).contiguous()
         out = F.conv2d(y, weight, groups=n * a)
         return out.reshape(n, a, c, out.shape[-2], out.shape[-1]).contiguous()
+    '''
+    # SPIRIT KSPACE CONVOLUTION OPERATOR
+    def G(self, x, filter):
+        kx, ky = self.ks
+        k1, k2 = kx // 2, ky // 2
+        n, d, a, c, X, Y = x.shape
+        b = filter.shape[2]
+
+        x = F.pad(x, (k2, k2, k1, k1))  #, mode='circular')
+        
+        # Move `d` to the batch dim: (n, d, a, c, X, Y) -> (d, n*a*c, padded_X, padded_Y)
+        x = x.permute(1, 0, 2, 3, 4, 5).reshape(d, n * a * c, x.shape[-2], x.shape[-1]).contiguous()
+        weight = filter.reshape(n * a * b, c, filter.shape[-2], filter.shape[-1]).contiguous()
+        
+        out = F.conv2d(x, weight, groups=n * a)
+        
+        # Reshape and restore dimension order: (d, n, a, b, X, Y) -> (n, d, a, b, X, Y)
+        out = out.reshape(d, n, a, b, out.shape[-2], out.shape[-1]).permute(1, 0, 2, 3, 4, 5)
+        return out.contiguous()
+
+    # SPIRIT KSPACE HERMITIAN CONVOLUTION OPERATOR
+    def GH(self, y, filter):
+        kx, ky = self.ks
+        k1, k2 = kx // 2, ky // 2
+        n, d, a, b, X, Y = y.shape
+        c = filter.shape[3]
+
+        y = F.pad(y, (k2, k2, k1, k1))  #, mode='circular')
+        
+        # Move `d` to the batch dim: (n, d, a, b, X, Y) -> (d, n*a*b, padded_X, padded_Y)
+        y = y.permute(1, 0, 2, 3, 4, 5).reshape(d, n * a * b, y.shape[-2], y.shape[-1]).contiguous()
+        
+        filter_adj = filter.conj().flip(-1, -2)
+        weight = filter_adj.transpose(2, 3).reshape(n * a * c, b, filter.shape[-2], filter.shape[-1]).contiguous()
+        
+        out = F.conv2d(y, weight, groups=n * a)
+        
+        # Reshape and restore dimension order: (d, n, a, c, X, Y) -> (n, d, a, c, X, Y)
+        out = out.reshape(d, n, a, c, out.shape[-2], out.shape[-1]).permute(1, 0, 2, 3, 4, 5)
+        return out.contiguous()
 
     def A(self, x, filter, mask):
         x = fft(x)
@@ -58,7 +99,7 @@ class DC_SPIRIT(torch.nn.Module):
         return out
     
 
-    def forward(self, zerofilled, coil, mask, denoiser=None, x0=None, CG_iter=None):
+    def forward(self, zerofilled, coil, mask, denoiser=None, x0=None, CG_iter=10):
         """
         Perform regularized LS with CG method across multiple batches.
         Note that input and output are already complex tensors.
@@ -70,7 +111,7 @@ class DC_SPIRIT(torch.nn.Module):
             mu = self.mu
 
         # Dimensions to reduce over (all dimensions except batch dim 0)
-        reduce_dims = tuple(range(1, zerofilled.ndim))
+        reduce_dims = tuple(range(2, zerofilled.ndim))
 
         # Calculate initial residual r0 = rhs - A(x0)
         rhs = zerofilled + mu * denoiser  # E^H*y + mu*z
@@ -102,5 +143,5 @@ class DC_SPIRIT(torch.nn.Module):
             r_now = r_next
             r_sq_now = r_sq_next
 
-        return b_approx
+        return b_approx, mu
 
